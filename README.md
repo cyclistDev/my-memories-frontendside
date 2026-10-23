@@ -17,6 +17,12 @@ VITE_API_BASE_URL=http://localhost:8080
 
 Configure the backend's `CORS_ALLOWED_ORIGINS` to include the exact frontend origin.
 
+## Deploy to GitHub Pages
+
+The GitHub Actions workflow builds the Vite app and deploys the generated `dist` directory. In the repository settings, select **Settings → Pages → Build and deployment → Source → GitHub Actions**. Push to `main` or run the workflow manually to deploy.
+
+The Pages build uses the `/my-memories-frontendside/` project path and the deployed Render API URL. Update `VITE_API_BASE_URL` in `.github/workflows/deploy-pages.yml` if the backend URL changes. The backend must allow `https://cyclistdev.github.io` as a CORS origin.
+
 ## Current features
 
 - Sign up with a username, email, and password, or log in with email and password.
