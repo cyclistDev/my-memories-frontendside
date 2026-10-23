@@ -1,6 +1,5 @@
-import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { authenticate, AuthApiError, type AuthField, type AuthFieldErrors, type AuthMode, type AuthSession } from './api'
-import { initialMemories, type Memory } from './mockMemories'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { authenticate, ApiError, createMemory, deleteMemory, getMemories, getTags, updateMemory, type AuthField, type AuthFieldErrors, type AuthMode, type AuthSession, type Memory, type MemoryInput, type MemoryTag } from './api'
 import './App.css'
 
 const SESSION_KEY = 'mymemories-session'
@@ -110,7 +109,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: AuthSessio
       })
       onAuthenticated(session)
     } catch (caughtError) {
-      if (caughtError instanceof AuthApiError) {
+      if (caughtError instanceof ApiError) {
         setFieldErrors(caughtError.fieldErrors)
         setError(Object.keys(caughtError.fieldErrors).length ? '' : caughtError.message)
       } else {
@@ -207,6 +206,11 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: AuthSessio
   )
 }
 
+function getLocalDate() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
 function MemoryEditor({
   memory,
   onSave,
@@ -214,21 +218,51 @@ function MemoryEditor({
   onClose,
 }: {
   memory: Memory | null
-  onSave: (title: string, content: string) => void
-  onDelete: () => void
+  onSave: (input: MemoryInput) => Promise<void>
+  onDelete: () => Promise<void>
   onClose: () => void
 }) {
   const [title, setTitle] = useState(memory?.title ?? '')
   const [content, setContent] = useState(memory?.content ?? '')
+  const [memoryDate, setMemoryDate] = useState(memory?.memoryDate ?? getLocalDate())
+  const [tags, setTags] = useState(memory?.tags.join(', ') ?? '')
   const [error, setError] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!title.trim()) {
-      setError('Give this memory a title before saving.')
+    const tagNames = [...new Set(tags.split(',').map((tag) => tag.trim().toLocaleLowerCase()).filter(Boolean))]
+    if (tagNames.length > 10) {
+      setError('A memory can have up to 10 tags.')
       return
     }
-    onSave(title.trim(), content.trim())
+    if (tagNames.some((tag) => tag.length > 30)) {
+      setError('Each tag must be 30 characters or fewer.')
+      return
+    }
+
+    setError('')
+    setIsSaving(true)
+    try {
+      await onSave({ title: title.trim(), content, memoryDate, tags: tagNames })
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'We couldn’t save this memory. Please try again.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  async function removeMemory() {
+    setError('')
+    setIsDeleting(true)
+    try {
+      await onDelete()
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'We couldn’t delete this memory. Please try again.')
+    } finally {
+      setIsDeleting(false)
+    }
   }
 
   return (
@@ -244,18 +278,26 @@ function MemoryEditor({
         <form onSubmit={submit}>
           <label className="field">
             <span>Title</span>
-            <input autoFocus maxLength={120} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Give this moment a name" required />
+            <input autoFocus maxLength={150} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Give this moment a name" required />
           </label>
           <label className="field">
-            <span>Your memory <small>· take all the space you need</small></span>
-            <textarea rows={8} value={content} onChange={(event) => setContent(event.target.value)} placeholder="What would you like to remember?" />
+            <span>When did it happen?</span>
+            <input type="date" value={memoryDate} onChange={(event) => setMemoryDate(event.target.value)} required />
+          </label>
+          <label className="field">
+            <span>Your memory <small>· up to 10,000 characters</small></span>
+            <textarea rows={8} maxLength={10000} value={content} onChange={(event) => setContent(event.target.value)} placeholder="What would you like to remember?" />
+          </label>
+          <label className="field">
+            <span>Tags <small>· separate with commas, up to 10</small></span>
+            <input maxLength={320} value={tags} onChange={(event) => setTags(event.target.value)} placeholder="family, travel, summer" />
           </label>
           {error && <p className="form-error" role="alert">{error}</p>}
           <div className="editor-actions">
-            {memory && <button className="button button-quiet button-delete" type="button" onClick={onDelete}><Icon name="trash" size={16} /> Delete</button>}
+            {memory && <button className="button button-quiet button-delete" type="button" onClick={removeMemory} disabled={isSaving || isDeleting}><Icon name="trash" size={16} /> {isDeleting ? 'Deleting…' : 'Delete'}</button>}
             <div className="editor-actions-right">
-              <button className="button button-quiet" type="button" onClick={onClose}>Cancel</button>
-              <button className="button button-primary" type="submit">Save memory <Icon name="arrow" size={16} /></button>
+              <button className="button button-quiet" type="button" onClick={onClose} disabled={isSaving || isDeleting}>Cancel</button>
+              <button className="button button-primary" type="submit" disabled={isSaving || isDeleting}>{isSaving ? 'Saving…' : 'Save memory'} {!isSaving && <Icon name="arrow" size={16} />}</button>
             </div>
           </div>
         </form>
@@ -265,41 +307,106 @@ function MemoryEditor({
 }
 
 function Dashboard({ session, onSignOut }: { session: AuthSession; onSignOut: () => void }) {
-  const [memories, setMemories] = useState<Memory[]>(initialMemories)
+  const [memories, setMemories] = useState<Memory[]>([])
+  const [tags, setTags] = useState<MemoryTag[]>([])
   const [query, setQuery] = useState('')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
+  const [selectedTag, setSelectedTag] = useState('')
+  const [sort, setSort] = useState('memoryDate,desc')
+  const [page, setPage] = useState(0)
+  const [totalPages, setTotalPages] = useState(0)
+  const [totalElements, setTotalElements] = useState(0)
+  const [loadedRequestKey, setLoadedRequestKey] = useState('')
+  const [loadFailure, setLoadFailure] = useState<{ key: string; message: string } | null>(null)
+  const [tagError, setTagError] = useState('')
+  const [refreshKey, setRefreshKey] = useState(0)
   const [editingMemory, setEditingMemory] = useState<Memory | null>(null)
   const [isCreating, setIsCreating] = useState(false)
-  const visibleMemories = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase()
-    return memories
-      .filter((memory) => `${memory.title} ${memory.content}`.toLocaleLowerCase().includes(normalizedQuery))
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-  }, [memories, query])
 
   const firstName = session.username.trim().split(/\s+/)[0] || 'friend'
+  const requestKey = JSON.stringify([session.token, query, fromDate, toDate, selectedTag, sort, page, refreshKey])
+  const isLoading = loadedRequestKey !== requestKey
+  const error = loadFailure?.key === requestKey ? loadFailure.message : ''
 
-  function saveMemory(title: string, content: string) {
-    if (editingMemory) {
-      setMemories((current) => current.map((memory) => memory.id === editingMemory.id
-        ? { ...memory, title, content, updatedAt: new Date().toISOString() }
-        : memory))
+  useEffect(() => {
+    const controller = new AbortController()
+    void getMemories(session.token, {
+      q: query.trim() || undefined,
+      from: fromDate || undefined,
+      to: toDate || undefined,
+      tag: selectedTag || undefined,
+      page,
+      size: 12,
+      sort: [sort, ...(sort === 'memoryDate,desc' ? ['createdAt,desc'] : [])],
+      signal: controller.signal,
+    }).then((result) => {
+      if (result.content.length === 0 && page > 0 && page >= result.totalPages) {
+        setPage(Math.max(0, result.totalPages - 1))
+        return
+      }
+      setMemories(result.content)
+      setTotalPages(result.totalPages)
+      setTotalElements(result.totalElements)
+      setLoadFailure(null)
+      setLoadedRequestKey(requestKey)
+    }).catch((caughtError: unknown) => {
+      if (controller.signal.aborted) return
+      if (caughtError instanceof ApiError && caughtError.status === 401) {
+        onSignOut()
+        return
+      }
+      setLoadFailure({
+        key: requestKey,
+        message: caughtError instanceof Error ? caughtError.message : 'We couldn’t load your memories. Please try again.',
+      })
+      setLoadedRequestKey(requestKey)
+    })
+    return () => controller.abort()
+  }, [session.token, query, fromDate, toDate, selectedTag, sort, page, refreshKey, requestKey, onSignOut])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    void getTags(session.token, controller.signal).then((result) => {
+      setTags(result)
+      setTagError('')
+    }).catch((caughtError: unknown) => {
+      if (controller.signal.aborted) return
+      if (caughtError instanceof ApiError && caughtError.status === 401) {
+        onSignOut()
+        return
+      }
+      setTagError(caughtError instanceof Error ? caughtError.message : 'We couldn’t load your tags. Please try again.')
+    })
+    return () => controller.abort()
+  }, [session.token, refreshKey, onSignOut])
+
+  function handleSave(input: MemoryInput) {
+    const operation = editingMemory
+      ? updateMemory(session.token, editingMemory.id, input)
+      : createMemory(session.token, input)
+    return operation.then(() => {
       setEditingMemory(null)
-    } else {
-      setMemories((current) => [{
-        id: crypto.randomUUID(),
-        title,
-        content,
-        updatedAt: new Date().toISOString(),
-      }, ...current])
       setIsCreating(false)
-    }
+      if (!editingMemory) setPage(0)
+      setRefreshKey((current) => current + 1)
+    }).catch((caughtError: unknown) => {
+      if (caughtError instanceof ApiError && caughtError.status === 401) onSignOut()
+      throw caughtError
+    })
   }
 
-  function deleteMemory() {
+  async function handleDelete(): Promise<void> {
     if (!editingMemory) return
     if (!window.confirm(`Delete “${editingMemory.title}”?`)) return
-    setMemories((current) => current.filter((memory) => memory.id !== editingMemory.id))
-    setEditingMemory(null)
+    try {
+      await deleteMemory(session.token, editingMemory.id)
+      setEditingMemory(null)
+      setRefreshKey((current) => current + 1)
+    } catch (caughtError) {
+      if (caughtError instanceof ApiError && caughtError.status === 401) onSignOut()
+      throw caughtError
+    }
   }
 
   return (
@@ -327,8 +434,8 @@ function Dashboard({ session, onSignOut }: { session: AuthSession; onSignOut: ()
           <div className="topbar-actions">
             <label className="search-box">
               <Icon name="search" size={18} />
-              <input aria-label="Search memories" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a memory..." />
-              {query && <button type="button" aria-label="Clear search" onClick={() => setQuery('')}><Icon name="close" size={15} /></button>}
+              <input aria-label="Search memories" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0) }} placeholder="Find a memory..." />
+              {query && <button type="button" aria-label="Clear search" onClick={() => { setQuery(''); setPage(0) }}><Icon name="close" size={15} /></button>}
             </label>
             <button type="button" className="avatar topbar-avatar" aria-label={`Signed in as ${session.username}`} title={session.email}>{firstName.charAt(0).toLocaleUpperCase()}</button>
           </div>
@@ -341,33 +448,71 @@ function Dashboard({ session, onSignOut }: { session: AuthSession; onSignOut: ()
               <h1>A lovely day to remember, {firstName}.</h1>
               <p className="welcome-subtitle">A collection of little things that mean a lot.</p>
             </div>
-            <button type="button" className="button button-primary add-memory-button" onClick={() => setIsCreating(true)}><Icon name="plus" size={18} /> New memory</button>
+            <button type="button" className="button button-primary add-memory-button" onClick={() => setIsCreating(true)} disabled={isLoading}><Icon name="plus" size={18} /> New memory</button>
           </div>
 
-          <div className="demo-notice"><Icon name="sparkle" size={16} /><span><strong>Preview mode</strong> — these sample memories are saved only for this visit. Journal saving will be available when the memory API is ready.</span></div>
+          {(error || tagError) && (
+            <div className="api-notice api-notice-error" role="alert">
+              <Icon name="close" size={16} />
+              <span>{error || tagError}</span>
+              <button className="button button-quiet" type="button" onClick={() => setRefreshKey((current) => current + 1)}>Try again</button>
+            </div>
+          )}
+
+          <div className="memory-filters" aria-label="Filter memories">
+            <label className="field">
+              <span>From</span>
+              <input aria-label="From date" type="date" value={fromDate} onChange={(event) => { setFromDate(event.target.value); setPage(0) }} />
+            </label>
+            <label className="field">
+              <span>To</span>
+              <input aria-label="To date" type="date" value={toDate} onChange={(event) => { setToDate(event.target.value); setPage(0) }} />
+            </label>
+            <label className="field">
+              <span>Tag</span>
+              <select aria-label="Filter by tag" value={selectedTag} onChange={(event) => { setSelectedTag(event.target.value); setPage(0) }}>
+                <option value="">All tags</option>
+                {tags.map((item) => <option key={item.name} value={item.name}>{item.name} ({item.memoryCount})</option>)}
+              </select>
+            </label>
+            <label className="field">
+              <span>Sort by</span>
+              <select aria-label="Sort memories" value={sort} onChange={(event) => { setSort(event.target.value); setPage(0) }}>
+                <option value="memoryDate,desc">Newest memory date</option>
+                <option value="memoryDate,asc">Oldest memory date</option>
+                <option value="createdAt,desc">Recently saved</option>
+                <option value="updatedAt,desc">Recently edited</option>
+              </select>
+            </label>
+          </div>
 
           <div className="section-heading">
             <div>
-              <h2>Your memories <span>{memories.length}</span></h2>
+              <h2>Your memories <span>{totalElements}</span></h2>
               <p>Every little thing worth keeping.</p>
             </div>
-            <span className="sort-label">MOST RECENT</span>
+            <span className="sort-label">PRIVATE TO YOU</span>
           </div>
 
-          {visibleMemories.length > 0 ? (
+          {isLoading ? (
+            <div className="empty-state" role="status"><h3>Opening your journal…</h3><p>Your memories are on their way.</p></div>
+          ) : error ? (
+            <div className="empty-state"><h3>Your journal couldn’t load.</h3><p>Please check your connection and try again.</p><button type="button" className="button button-quiet" onClick={() => setRefreshKey((current) => current + 1)}>Try again</button></div>
+          ) : memories.length > 0 ? (
             <div className="memory-grid">
-              {visibleMemories.map((memory, index) => (
+              {memories.map((memory, index) => (
                 <article className={`memory-card memory-card-${index % 3}`} key={memory.id}>
                   <div className="memory-card-top">
                     <span className="memory-decoration" aria-hidden="true"><Icon name={index % 2 === 0 ? 'sparkle' : 'book'} size={18} /></span>
-                    <time dateTime={memory.updatedAt}>{new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(memory.updatedAt))}</time>
+                    <time dateTime={memory.memoryDate}>{new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(`${memory.memoryDate}T00:00:00`))}</time>
                   </div>
                   <button className="memory-card-content" type="button" onClick={() => setEditingMemory(memory)} aria-label={`Edit ${memory.title}`}>
                     <h3>{memory.title}</h3>
                     <p>{memory.content || 'A quiet little moment, saved just as it was.'}</p>
                   </button>
+                  {memory.tags.length > 0 && <div className="memory-tags">{memory.tags.map((name) => <span key={name}>{name}</span>)}</div>}
                   <div className="memory-card-footer">
-                    <span>IN YOUR JOURNAL</span>
+                    <span>UPDATED {new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(memory.updatedAt))}</span>
                     <button className="card-edit" type="button" onClick={() => setEditingMemory(memory)} aria-label={`Edit ${memory.title}`}><Icon name="edit" size={16} /></button>
                   </div>
                 </article>
@@ -376,12 +521,20 @@ function Dashboard({ session, onSignOut }: { session: AuthSession; onSignOut: ()
           ) : (
             <div className="empty-state">
               <span className="empty-icon"><Icon name="search" size={24} /></span>
-              <h3>{query ? 'No memories found just yet.' : 'A fresh page, all yours.'}</h3>
-              <p>{query ? 'Try another word or clear your search.' : 'Save a thought, a moment, or anything you want to come back to.'}</p>
-              {query
-                ? <button type="button" className="button button-quiet" onClick={() => setQuery('')}>Clear search</button>
+              <h3>{query || fromDate || toDate || selectedTag ? 'No memories match these filters.' : 'A fresh page, all yours.'}</h3>
+              <p>{query || fromDate || toDate || selectedTag ? 'Try changing or clearing your filters.' : 'Save a thought, a moment, or anything you want to come back to.'}</p>
+              {query || fromDate || toDate || selectedTag
+                ? <button type="button" className="button button-quiet" onClick={() => { setQuery(''); setFromDate(''); setToDate(''); setSelectedTag(''); setPage(0) }}>Clear filters</button>
                 : <button type="button" className="button button-primary" onClick={() => setIsCreating(true)}><Icon name="plus" size={17} /> Write your first memory</button>}
             </div>
+          )}
+
+          {totalPages > 1 && (
+            <nav className="pagination" aria-label="Memory pages">
+              <button className="button button-quiet" type="button" onClick={() => setPage((current) => Math.max(0, current - 1))} disabled={page === 0 || isLoading}>Previous</button>
+              <span>Page {page + 1} of {totalPages}</span>
+              <button className="button button-quiet" type="button" onClick={() => setPage((current) => Math.min(totalPages - 1, current + 1))} disabled={page + 1 >= totalPages || isLoading}>Next</button>
+            </nav>
           )}
 
           <footer className="journal-footer"><span>Made for the moments in between.</span><span>YOUR SPACE, YOUR PACE <span className="footer-sparkle">✳</span></span></footer>
@@ -392,8 +545,8 @@ function Dashboard({ session, onSignOut }: { session: AuthSession; onSignOut: ()
         <MemoryEditor
           key={editingMemory?.id ?? 'new'}
           memory={editingMemory}
-          onSave={saveMemory}
-          onDelete={deleteMemory}
+          onSave={handleSave}
+          onDelete={handleDelete}
           onClose={() => { setIsCreating(false); setEditingMemory(null) }}
         />
       )}

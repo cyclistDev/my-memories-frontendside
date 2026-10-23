@@ -673,29 +673,97 @@
   font-size: 11px;
 }
 
-.demo-notice {
+.api-notice {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
-  margin: 32px 0 41px;
+  margin: 28px 0 23px;
   border: 1px solid #e9e8da;
   border-radius: 6px;
-  padding: 12px 14px;
-  color: #858271;
+  padding: 11px 13px;
+  color: #777466;
   background: #f4f3e9;
   font-size: 10px;
   line-height: 1.6;
 }
 
-.demo-notice > svg {
+.api-notice > svg {
   flex: 0 0 auto;
-  margin-top: 1px;
   color: #899078;
 }
 
-.demo-notice strong {
-  color: #696b57;
-  font-weight: 600;
+.api-notice-error {
+  border-color: #e8d1c9;
+  color: #944b40;
+  background: #fbf2ef;
+}
+
+.api-notice-error > svg {
+  color: #a24437;
+}
+
+.api-notice .button {
+  min-height: 32px;
+  margin-left: auto;
+  padding: 0 10px;
+  font-size: 10px;
+}
+
+.memory-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 34px;
+}
+
+.memory-filters .field {
+  gap: 6px;
+  color: #8b877c;
+  font-size: 9px;
+}
+
+.memory-filters input,
+.memory-filters select {
+  width: 100%;
+  min-width: 0;
+  height: 37px;
+  border: 1px solid #e8e4da;
+  border-radius: 6px;
+  padding: 0 9px;
+  color: #686459;
+  background: #fffefa;
+  font-size: 10px;
+}
+
+.memory-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0 0 10px;
+}
+
+.memory-tags span {
+  border-radius: 12px;
+  padding: 4px 8px;
+  color: #737a63;
+  background: #eff1e9;
+  font-size: 9px;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  margin-top: 24px;
+  color: #898579;
+  font-size: 10px;
+}
+
+.pagination .button {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 10px;
 }
 
 .section-heading {
@@ -990,6 +1058,10 @@
   min-height: 180px;
 }
 
+.memory-editor .field input[type='date'] {
+  height: 42px;
+}
+
 .editor-actions {
   display: flex;
   align-items: center;
@@ -1130,9 +1202,8 @@
     padding: 38px 20px 18px;
   }
 
-  .demo-notice {
-    margin-top: 25px;
-    margin-bottom: 33px;
+  .memory-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .journal-footer {
@@ -1183,6 +1254,18 @@
 
   .memory-grid {
     grid-template-columns: 1fr;
+  }
+
+  .memory-filters {
+    gap: 9px;
+  }
+
+  .api-notice {
+    align-items: flex-start;
+  }
+
+  .api-notice .button {
+    flex: 0 0 auto;
   }
 
   .memory-card {
